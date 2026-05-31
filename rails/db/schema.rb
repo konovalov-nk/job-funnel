@@ -10,9 +10,20 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_02_16_193508) do
+ActiveRecord::Schema[8.1].define(version: 2026_05_31_094339) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
+
+  create_table "fetch_runs", force: :cascade do |t|
+    t.string "adapter"
+    t.text "content"
+    t.datetime "created_at", null: false
+    t.integer "retry_count"
+    t.bigint "source_id", null: false
+    t.string "status"
+    t.datetime "updated_at", null: false
+    t.index ["source_id"], name: "index_fetch_runs_on_source_id"
+  end
 
   create_table "posts", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
     t.text "body", null: false
@@ -20,4 +31,17 @@ ActiveRecord::Schema[8.1].define(version: 2026_02_16_193508) do
     t.string "title", null: false
     t.datetime "updated_at", null: false
   end
+
+  create_table "sources", force: :cascade do |t|
+    t.string "adapter"
+    t.string "auth_mode"
+    t.string "base_url"
+    t.datetime "created_at", null: false
+    t.boolean "enabled"
+    t.string "name"
+    t.string "source_type"
+    t.datetime "updated_at", null: false
+  end
+
+  add_foreign_key "fetch_runs", "sources"
 end
