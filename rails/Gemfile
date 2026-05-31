@@ -24,6 +24,8 @@ group :development, :test do
   gem "brakeman", require: false
   gem "bundler-audit", require: false
   gem "debug", platforms: %i[mri windows], require: "debug/prelude"
+  gem "factory_bot_rails"
+  gem "rspec-rails"
   gem "standard", ">= 1.35.1", require: false
   gem "standard-rails", require: false
 end
