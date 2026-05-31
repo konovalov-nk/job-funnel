@@ -1,0 +1,990 @@
+{
+  "schema_version": "0.1.0",
+  "project": {
+    "slug": "job-tracker",
+    "title": "Personal Job Tracker / Job Funnel",
+    "milestone": "M0",
+    "intent": "Build a local Rails-based tracker that ingests already-deduped job/company source data, tracks jobs, applications, questions, resume data, interviews, artifacts, company research, and event history.",
+    "non_goals": [
+      "No global cross-source deduplication in M0.",
+      "No login bypass or scraping behind authentication in M0.",
+      "No live auto-submit unless an apply adapter is explicitly implemented and tested against a safe target.",
+      "No external production deployment in M0. Localhost via Caddy only."
+    ]
+  },
+  "spec_format": {
+    "spec": ["id", "slug", "title", "level", "status", "description"],
+    "ac": ["id", "spec_id", "slug", "title", "review", "risk", "concerns", "intent"]
+  },
+  "specs": [
+    {
+      "id": "SPEC-MODEL-00-SOURCE",
+      "slug": "model/source",
+      "title": "Source and fetch run",
+      "level": "system",
+      "status": "draft",
+      "description": "Source represents a provider of seed job/company data. It contains name, type, base_url, adapter, auth_mode, and enabled. FetchRun records adapter execution attempts for a source, including retry count, status, and JSON content containing evidence or captured errors.",
+      "models": [
+        {"name": "source", "fields": ["id", "name", "type", "base_url", "adapter", "auth_mode", "enabled"]},
+        {"name": "fetch_run", "fields": ["id", "source_id", "adapter", "retry", "status", "content"]}
+      ],
+      "acs": [
+        {"id": "AC-MODEL-00-01", "spec_id": "SPEC-MODEL-00-SOURCE", "slug": "can-create-and-persist-valid-source", "title": "System can persist valid Source", "review": "automated", "risk": "medium", "concerns": ["enum validation", "adapter registry", "auth mode semantics"], "intent": "Given valid Source attributes, a Source row is persisted in the selected DB engine."},
+        {"id": "AC-MODEL-00-02", "spec_id": "SPEC-MODEL-00-SOURCE", "slug": "can-create-fetch-run-for-enabled-source", "title": "System can create FetchRun for enabled Source", "review": "automated", "risk": "medium", "concerns": ["disabled source guard", "retry bounds", "status transitions"], "intent": "Given an enabled Source, creating a fetch run persists a new FetchRun with status new and retry 0."},
+        {"id": "AC-MODEL-00-03", "spec_id": "SPEC-MODEL-00-SOURCE", "slug": "rejects-invalid-source-enums", "title": "System rejects invalid Source enums", "review": "automated", "risk": "low", "concerns": ["bad type", "bad adapter", "bad auth_mode"], "intent": "Invalid source type, adapter, or auth_mode must not persist."}
+      ]
+    },
+    {
+      "id": "SPEC-MODEL-01-COMPANY",
+      "slug": "model/company",
+      "title": "Company",
+      "level": "system",
+      "status": "draft",
+      "description": "Company stores organizations discovered from sources or manually added. It links to the source that introduced it and stores website and careers page URL.",
+      "models": [{"name": "company", "fields": ["id", "source_id", "company_name", "website", "careers_page_url", "created_at", "updated_at"]}],
+      "acs": [
+        {"id": "AC-MODEL-01-01", "spec_id": "SPEC-MODEL-01-COMPANY", "slug": "can-persist-company-from-source", "title": "System can persist Company from Source", "review": "automated", "risk": "medium", "concerns": ["source relation", "URL validation"], "intent": "Given a valid source and company attributes, a Company row is persisted."},
+        {"id": "AC-MODEL-01-02", "spec_id": "SPEC-MODEL-01-COMPANY", "slug": "company-has-valid-url-fields", "title": "Company URL fields are valid or blank", "review": "automated", "risk": "low", "concerns": ["malformed URLs"], "intent": "Website and careers page URL should either be blank or parse as URLs."}
+      ]
+    },
+    {
+      "id": "SPEC-MODEL-02-RESUME",
+      "slug": "model/resume",
+      "title": "Resume",
+      "level": "system",
+      "status": "draft",
+      "description": "Resume stores structured JSON plus optional PDF location or blob reference. Resume is used when generating application drafts and submit payloads.",
+      "models": [{"name": "resume", "fields": ["id", "json", "pdf_location", "pdf_blob", "created_at", "updated_at"]}],
+      "acs": [
+        {"id": "AC-MODEL-02-01", "spec_id": "SPEC-MODEL-02-RESUME", "slug": "can-persist-structured-resume", "title": "System can persist structured Resume", "review": "automated", "risk": "medium", "concerns": ["JSON shape", "PDF reference"], "intent": "Given valid resume JSON, the system persists the Resume and stores any provided PDF reference."},
+        {"id": "AC-MODEL-02-02", "spec_id": "SPEC-MODEL-02-RESUME", "slug": "resume-json-is-required", "title": "Resume JSON is required", "review": "automated", "risk": "low", "concerns": ["empty resume"], "intent": "A Resume cannot be created without structured JSON."}
+      ]
+    },
+    {
+      "id": "SPEC-MODEL-03-EXPERIENCE",
+      "slug": "model/experience",
+      "title": "Experience",
+      "level": "system",
+      "status": "draft",
+      "description": "Experience stores a work-history entry extracted from a resume or entered manually.",
+      "models": [{"name": "experience", "fields": ["id", "company_name", "title", "description", "start_date", "end_date"]}],
+      "acs": [
+        {"id": "AC-MODEL-03-01", "spec_id": "SPEC-MODEL-03-EXPERIENCE", "slug": "can-persist-valid-experience", "title": "System can persist valid Experience", "review": "automated", "risk": "low", "concerns": ["date ranges"], "intent": "Given company name, title, description, and valid dates, an Experience row is persisted."},
+        {"id": "AC-MODEL-03-02", "spec_id": "SPEC-MODEL-03-EXPERIENCE", "slug": "rejects-impossible-date-range", "title": "Experience rejects impossible date range", "review": "automated", "risk": "low", "concerns": ["end before start"], "intent": "End date cannot be earlier than start date."}
+      ]
+    },
+    {
+      "id": "SPEC-MODEL-04-RESUME-EXPERIENCE",
+      "slug": "model/resume-experience",
+      "title": "Resume experience link",
+      "level": "system",
+      "status": "draft",
+      "description": "ResumeExperience connects Resume rows to parsed Experience rows.",
+      "models": [{"name": "resume_experience", "fields": ["id", "resume_id", "experience_id"]}],
+      "acs": [
+        {"id": "AC-MODEL-04-01", "spec_id": "SPEC-MODEL-04-RESUME-EXPERIENCE", "slug": "can-link-resume-to-experience", "title": "System can link Resume to Experience", "review": "automated", "risk": "low", "concerns": ["foreign keys"], "intent": "Given existing Resume and Experience rows, the system persists a link row."},
+        {"id": "AC-MODEL-04-02", "spec_id": "SPEC-MODEL-04-RESUME-EXPERIENCE", "slug": "prevents-duplicate-link", "title": "System prevents duplicate ResumeExperience link", "review": "automated", "risk": "low", "concerns": ["duplicate relations"], "intent": "The same resume_id and experience_id pair should not be duplicated."}
+      ]
+    },
+    {
+      "id": "SPEC-MODEL-05-SKILL",
+      "slug": "model/skill",
+      "title": "Skill",
+      "level": "system",
+      "status": "draft",
+      "description": "Skill stores normalized capability names and their type, such as programming_language, framework, library, technology, concern, or service.",
+      "models": [{"name": "skill", "fields": ["id", "name", "type"]}],
+      "acs": [
+        {"id": "AC-MODEL-05-01", "spec_id": "SPEC-MODEL-05-SKILL", "slug": "can-persist-valid-skill", "title": "System can persist valid Skill", "review": "automated", "risk": "low", "concerns": ["enum validation", "normalization"], "intent": "Given a skill name and valid type, a Skill row is persisted."},
+        {"id": "AC-MODEL-05-02", "spec_id": "SPEC-MODEL-05-SKILL", "slug": "prevents-duplicate-normalized-skill", "title": "System prevents duplicate normalized Skill", "review": "automated", "risk": "medium", "concerns": ["Rails vs Ruby on Rails aliases"], "intent": "The same normalized skill should not be created twice."}
+      ]
+    },
+    {
+      "id": "SPEC-MODEL-06-EXPERIENCE-SKILL",
+      "slug": "model/experience-skill",
+      "title": "Experience skill link",
+      "level": "system",
+      "status": "draft",
+      "description": "ExperienceSkill connects Experience rows to Skill rows.",
+      "models": [{"name": "experience_skill", "fields": ["id", "experience_id", "skill_id"]}],
+      "acs": [
+        {"id": "AC-MODEL-06-01", "spec_id": "SPEC-MODEL-06-EXPERIENCE-SKILL", "slug": "can-link-experience-to-skill", "title": "System can link Experience to Skill", "review": "automated", "risk": "low", "concerns": ["foreign keys"], "intent": "Given existing Experience and Skill rows, the system persists a link row."},
+        {"id": "AC-MODEL-06-02", "spec_id": "SPEC-MODEL-06-EXPERIENCE-SKILL", "slug": "prevents-duplicate-experience-skill", "title": "System prevents duplicate ExperienceSkill link", "review": "automated", "risk": "low", "concerns": ["duplicate relations"], "intent": "The same experience_id and skill_id pair should not be duplicated."}
+      ]
+    },
+    {
+      "id": "SPEC-MODEL-07-EXPERIENCE-STORY",
+      "slug": "model/experience-story",
+      "title": "Experience story",
+      "level": "system",
+      "status": "draft",
+      "description": "ExperienceStory stores STAR-style examples linked to an Experience.",
+      "models": [{"name": "experience_story", "fields": ["id", "experience_id", "situation", "task", "action", "result"]}],
+      "acs": [
+        {"id": "AC-MODEL-07-01", "spec_id": "SPEC-MODEL-07-EXPERIENCE-STORY", "slug": "can-persist-experience-story", "title": "System can persist ExperienceStory", "review": "automated", "risk": "low", "concerns": ["foreign keys"], "intent": "Given an existing Experience and STAR fields, an ExperienceStory row is persisted."},
+        {"id": "AC-MODEL-07-02", "spec_id": "SPEC-MODEL-07-EXPERIENCE-STORY", "slug": "story-requires-action-and-result", "title": "ExperienceStory requires action and result", "review": "automated", "risk": "low", "concerns": ["weak story data"], "intent": "Action and result should be present because they are needed for useful application answers."}
+      ]
+    },
+    {
+      "id": "SPEC-MODEL-08-QUESTION",
+      "slug": "model/question",
+      "title": "Question",
+      "level": "system",
+      "status": "draft",
+      "description": "Question stores reusable applicant questions discovered during job research or manually added.",
+      "models": [{"name": "question", "fields": ["id", "concern", "text", "response_type"]}],
+      "acs": [
+        {"id": "AC-MODEL-08-01", "spec_id": "SPEC-MODEL-08-QUESTION", "slug": "can-persist-valid-question", "title": "System can persist valid Question", "review": "automated", "risk": "low", "concerns": ["enum validation"], "intent": "Given concern, text, and response_type, a Question row is persisted."},
+        {"id": "AC-MODEL-08-02", "spec_id": "SPEC-MODEL-08-QUESTION", "slug": "question-text-is-required", "title": "Question text is required", "review": "automated", "risk": "low", "concerns": ["empty extracted question"], "intent": "A Question cannot be persisted without text."}
+      ]
+    },
+    {
+      "id": "SPEC-MODEL-09-QUESTION-RESPONSE",
+      "slug": "model/question-response",
+      "title": "Question response",
+      "level": "system",
+      "status": "draft",
+      "description": "QuestionResponse stores draft or approved answer material for a Question.",
+      "models": [{"name": "question_response", "fields": ["id", "question_id", "type", "response", "status"]}],
+      "acs": [
+        {"id": "AC-MODEL-09-01", "spec_id": "SPEC-MODEL-09-QUESTION-RESPONSE", "slug": "can-persist-draft-response", "title": "System can persist draft QuestionResponse", "review": "automated", "risk": "low", "concerns": ["status lifecycle"], "intent": "Given a Question and response payload, a draft QuestionResponse is persisted."},
+        {"id": "AC-MODEL-09-02", "spec_id": "SPEC-MODEL-09-QUESTION-RESPONSE", "slug": "approved-response-requires-content", "title": "Approved response requires content", "review": "automated", "risk": "medium", "concerns": ["empty approved answers"], "intent": "A response cannot transition to approved unless content is present."}
+      ]
+    },
+    {
+      "id": "SPEC-MODEL-10-JOB",
+      "slug": "model/job",
+      "title": "Job",
+      "level": "system",
+      "status": "draft",
+      "description": "Job stores a normalized job posting from a source. It links to Source and Company and tracks application URL, apply adapter, skip reason, timestamps, and status.",
+      "models": [{"name": "job", "fields": ["id", "canonical_id", "source_id", "company_id", "job_name", "description", "apply_url", "apply_adapter", "skip_reason", "created_at", "status"]}],
+      "acs": [
+        {"id": "AC-MODEL-10-01", "spec_id": "SPEC-MODEL-10-JOB", "slug": "can-persist-new-job", "title": "System can persist new Job", "review": "automated", "risk": "medium", "concerns": ["source relation", "company relation", "canonical id"], "intent": "Given valid source, company, canonical_id, title, and apply_url, a Job row is persisted with status new."},
+        {"id": "AC-MODEL-10-02", "spec_id": "SPEC-MODEL-10-JOB", "slug": "skip-status-requires-skip-reason", "title": "Skipped Job requires skip reason", "review": "automated", "risk": "low", "concerns": ["unexplained filtering"], "intent": "A Job cannot transition to skip without a skip_reason."},
+        {"id": "AC-MODEL-10-03", "spec_id": "SPEC-MODEL-10-JOB", "slug": "canonical-id-is-unique-per-source", "title": "canonical_id is unique per Source", "review": "automated", "risk": "medium", "concerns": ["duplicate imports"], "intent": "The same source_id and canonical_id pair should not create duplicate jobs."}
+      ]
+    },
+    {
+      "id": "SPEC-MODEL-11-JOB-SKILL",
+      "slug": "model/job-skill",
+      "title": "Job skill link",
+      "level": "system",
+      "status": "draft",
+      "description": "JobSkill links jobs to mentioned or required skills.",
+      "models": [{"name": "job_skill", "fields": ["id", "job_id", "skill_id", "required"]}],
+      "acs": [
+        {"id": "AC-MODEL-11-01", "spec_id": "SPEC-MODEL-11-JOB-SKILL", "slug": "can-link-job-to-skill", "title": "System can link Job to Skill", "review": "automated", "risk": "low", "concerns": ["foreign keys"], "intent": "Given existing Job and Skill rows, the system persists a JobSkill row."},
+        {"id": "AC-MODEL-11-02", "spec_id": "SPEC-MODEL-11-JOB-SKILL", "slug": "required-defaults-to-false", "title": "JobSkill required defaults to false", "review": "automated", "risk": "low", "concerns": ["missing required flag"], "intent": "If required is omitted, it defaults to false."}
+      ]
+    },
+    {
+      "id": "SPEC-MODEL-12-JOB-QUESTION",
+      "slug": "model/job-question",
+      "title": "Job question link",
+      "level": "system",
+      "status": "draft",
+      "description": "JobQuestion links jobs to questions discovered during research or application preparation.",
+      "models": [{"name": "job_question", "fields": ["id", "job_id", "question_id", "required"]}],
+      "acs": [
+        {"id": "AC-MODEL-12-01", "spec_id": "SPEC-MODEL-12-JOB-QUESTION", "slug": "can-link-job-to-question", "title": "System can link Job to Question", "review": "automated", "risk": "low", "concerns": ["foreign keys"], "intent": "Given existing Job and Question rows, the system persists a JobQuestion row."},
+        {"id": "AC-MODEL-12-02", "spec_id": "SPEC-MODEL-12-JOB-QUESTION", "slug": "prevents-duplicate-job-question", "title": "System prevents duplicate JobQuestion link", "review": "automated", "risk": "low", "concerns": ["duplicate extracted questions"], "intent": "The same job_id and question_id pair should not be duplicated."}
+      ]
+    },
+    {
+      "id": "SPEC-MODEL-13-APPLICATION",
+      "slug": "model/application",
+      "title": "Application",
+      "level": "system",
+      "status": "draft",
+      "description": "Application tracks the candidate funnel for a Job using a selected Resume. Status lifecycle is new -> draft_ready -> approved_for_submit -> submitted -> rejected/in_progress/completed.",
+      "models": [{"name": "application", "fields": ["id", "job_id", "resume_id", "status"]}],
+      "acs": [
+        {"id": "AC-MODEL-13-01", "spec_id": "SPEC-MODEL-13-APPLICATION", "slug": "can-create-new-application", "title": "System can create new Application", "review": "automated", "risk": "medium", "concerns": ["job relation", "resume relation"], "intent": "Given existing Job and Resume rows, the system persists an Application with status new."},
+        {"id": "AC-MODEL-13-02", "spec_id": "SPEC-MODEL-13-APPLICATION", "slug": "application-status-transition-is-valid", "title": "Application status transition is valid", "review": "automated", "risk": "medium", "concerns": ["invalid lifecycle jumps"], "intent": "Application status transitions must follow the declared lifecycle."},
+        {"id": "AC-MODEL-13-03", "spec_id": "SPEC-MODEL-13-APPLICATION", "slug": "one-active-application-per-job", "title": "Only one active Application per Job", "review": "automated", "risk": "medium", "concerns": ["duplicate applications"], "intent": "A job should not have multiple active application records in M0."}
+      ]
+    },
+    {
+      "id": "SPEC-MODEL-14-APPLICATION-QUESTION-RESPONSE",
+      "slug": "model/application-question-response",
+      "title": "Application question response link",
+      "level": "system",
+      "status": "draft",
+      "description": "ApplicationQuestionResponse links draft or approved responses to a specific application.",
+      "models": [{"name": "application_question_response", "fields": ["id", "application_id", "question_response_id"]}],
+      "acs": [
+        {"id": "AC-MODEL-14-01", "spec_id": "SPEC-MODEL-14-APPLICATION-QUESTION-RESPONSE", "slug": "can-link-application-to-question-response", "title": "System can link Application to QuestionResponse", "review": "automated", "risk": "low", "concerns": ["foreign keys"], "intent": "Given existing Application and QuestionResponse rows, the system persists a link row."},
+        {"id": "AC-MODEL-14-02", "spec_id": "SPEC-MODEL-14-APPLICATION-QUESTION-RESPONSE", "slug": "prevents-duplicate-application-response-link", "title": "System prevents duplicate ApplicationQuestionResponse link", "review": "automated", "risk": "low", "concerns": ["duplicate answers"], "intent": "The same application_id and question_response_id pair should not be duplicated."}
+      ]
+    },
+    {
+      "id": "SPEC-MODEL-15-JOB-INTERVIEW-STAGE",
+      "slug": "model/job-interview-stage",
+      "title": "Job interview stage",
+      "level": "system",
+      "status": "draft",
+      "description": "JobInterviewStage stores expected interview stages for a job with order and stage type.",
+      "models": [{"name": "job_interview_stage", "fields": ["id", "job_id", "order", "type"]}],
+      "acs": [
+        {"id": "AC-MODEL-15-01", "spec_id": "SPEC-MODEL-15-JOB-INTERVIEW-STAGE", "slug": "can-persist-job-interview-stage", "title": "System can persist JobInterviewStage", "review": "automated", "risk": "low", "concerns": ["stage enum", "ordering"], "intent": "Given a Job, order, and stage type, the system persists a JobInterviewStage row."},
+        {"id": "AC-MODEL-15-02", "spec_id": "SPEC-MODEL-15-JOB-INTERVIEW-STAGE", "slug": "stage-order-unique-per-job", "title": "Stage order is unique per Job", "review": "automated", "risk": "low", "concerns": ["ambiguous ordering"], "intent": "A job cannot have two interview stages with the same order."}
+      ]
+    },
+    {
+      "id": "SPEC-MODEL-16-INTERVIEW",
+      "slug": "model/interview",
+      "title": "Interview",
+      "level": "system",
+      "status": "draft",
+      "description": "Interview tracks a concrete interview instance for a job interview stage, including date, status, and result.",
+      "models": [{"name": "interview", "fields": ["id", "job_interview_stage_id", "date", "status", "result"]}],
+      "acs": [
+        {"id": "AC-MODEL-16-01", "spec_id": "SPEC-MODEL-16-INTERVIEW", "slug": "can-persist-interview", "title": "System can persist Interview", "review": "automated", "risk": "medium", "concerns": ["stage relation", "status lifecycle"], "intent": "Given an interview stage and date, the system persists an Interview with status new and result awaiting."},
+        {"id": "AC-MODEL-16-02", "spec_id": "SPEC-MODEL-16-INTERVIEW", "slug": "completed-interview-requires-final-result", "title": "Completed Interview requires final result", "review": "automated", "risk": "medium", "concerns": ["awaiting result after completion"], "intent": "When status is completed, result must be success or reject."}
+      ]
+    },
+    {
+      "id": "SPEC-MODEL-17-INTERVIEW-ARTIFACT",
+      "slug": "model/interview-artifact",
+      "title": "Interview artifact",
+      "level": "system",
+      "status": "draft",
+      "description": "InterviewArtifact stores artifacts related to an Interview, such as audio, transcript, feedback, screen recording, source repository, or interview URL.",
+      "models": [{"name": "interview_artifact", "fields": ["id", "interview_id", "type", "content"]}],
+      "acs": [
+        {"id": "AC-MODEL-17-01", "spec_id": "SPEC-MODEL-17-INTERVIEW-ARTIFACT", "slug": "can-persist-interview-artifact", "title": "System can persist InterviewArtifact", "review": "automated", "risk": "low", "concerns": ["artifact type enum"], "intent": "Given an Interview and artifact type/content, the system persists an InterviewArtifact row."},
+        {"id": "AC-MODEL-17-02", "spec_id": "SPEC-MODEL-17-INTERVIEW-ARTIFACT", "slug": "artifact-content-is-required", "title": "InterviewArtifact content is required", "review": "automated", "risk": "low", "concerns": ["empty artifact"], "intent": "An artifact must include content JSON or a file/location reference."}
+      ]
+    },
+    {
+      "id": "SPEC-MODEL-18-PERSON",
+      "slug": "model/person",
+      "title": "Person",
+      "level": "system",
+      "status": "draft",
+      "description": "Person stores contact details for recruiters, employees, interviewers, or other relevant people.",
+      "models": [{"name": "person", "fields": ["id", "name", "email", "linkedin", "website", "phone", "telegram", "discord", "notes"]}],
+      "acs": [
+        {"id": "AC-MODEL-18-01", "spec_id": "SPEC-MODEL-18-PERSON", "slug": "can-persist-person", "title": "System can persist Person", "review": "automated", "risk": "low", "concerns": ["contact validation"], "intent": "Given a name and optional contact fields, the system persists a Person row."},
+        {"id": "AC-MODEL-18-02", "spec_id": "SPEC-MODEL-18-PERSON", "slug": "contact-fields-are-valid-or-blank", "title": "Person contact fields are valid or blank", "review": "automated", "risk": "low", "concerns": ["malformed email or URL"], "intent": "Email and URL-like fields must either be blank or valid."}
+      ]
+    },
+    {
+      "id": "SPEC-MODEL-19-INTERVIEW-PERSON",
+      "slug": "model/interview-person",
+      "title": "Interview person link",
+      "level": "system",
+      "status": "draft",
+      "description": "InterviewPerson links people to interviews.",
+      "models": [{"name": "interview_person", "fields": ["id", "interview_id", "person_id"]}],
+      "acs": [
+        {"id": "AC-MODEL-19-01", "spec_id": "SPEC-MODEL-19-INTERVIEW-PERSON", "slug": "can-link-person-to-interview", "title": "System can link Person to Interview", "review": "automated", "risk": "low", "concerns": ["foreign keys"], "intent": "Given existing Interview and Person rows, the system persists an InterviewPerson link."},
+        {"id": "AC-MODEL-19-02", "spec_id": "SPEC-MODEL-19-INTERVIEW-PERSON", "slug": "prevents-duplicate-interview-person", "title": "System prevents duplicate InterviewPerson link", "review": "automated", "risk": "low", "concerns": ["duplicate relations"], "intent": "The same interview_id and person_id pair should not be duplicated."}
+      ]
+    },
+    {
+      "id": "SPEC-MODEL-20-COMPANY-EMPLOYEE",
+      "slug": "model/company-employee",
+      "title": "Company employee link",
+      "level": "system",
+      "status": "draft",
+      "description": "CompanyEmployee links people to companies with a role.",
+      "models": [{"name": "company_employee", "fields": ["id", "company_id", "person_id", "role"]}],
+      "acs": [
+        {"id": "AC-MODEL-20-01", "spec_id": "SPEC-MODEL-20-COMPANY-EMPLOYEE", "slug": "can-link-person-to-company-as-employee", "title": "System can link Person to Company as employee", "review": "automated", "risk": "low", "concerns": ["role semantics"], "intent": "Given existing Company and Person rows, the system persists a CompanyEmployee link with role."},
+        {"id": "AC-MODEL-20-02", "spec_id": "SPEC-MODEL-20-COMPANY-EMPLOYEE", "slug": "role-is-required", "title": "CompanyEmployee role is required", "review": "automated", "risk": "low", "concerns": ["unknown relationship"], "intent": "A CompanyEmployee row requires a role string."}
+      ]
+    },
+    {
+      "id": "SPEC-MODEL-21-COMPANY-RECRUITER",
+      "slug": "model/company-recruiter",
+      "title": "Company recruiter link",
+      "level": "system",
+      "status": "draft",
+      "description": "CompanyRecruiter links people to companies as recruiter contacts.",
+      "models": [{"name": "company_recruiter", "fields": ["id", "company_id", "person_id"]}],
+      "acs": [
+        {"id": "AC-MODEL-21-01", "spec_id": "SPEC-MODEL-21-COMPANY-RECRUITER", "slug": "can-link-person-to-company-as-recruiter", "title": "System can link Person to Company as recruiter", "review": "automated", "risk": "low", "concerns": ["foreign keys"], "intent": "Given existing Company and Person rows, the system persists a CompanyRecruiter link."},
+        {"id": "AC-MODEL-21-02", "spec_id": "SPEC-MODEL-21-COMPANY-RECRUITER", "slug": "prevents-duplicate-company-recruiter", "title": "System prevents duplicate CompanyRecruiter link", "review": "automated", "risk": "low", "concerns": ["duplicate recruiter contacts"], "intent": "The same company_id and person_id pair should not be duplicated."}
+      ]
+    },
+    {
+      "id": "SPEC-MODEL-22-APPLICATION-ARTIFACT",
+      "slug": "model/application-artifact",
+      "title": "Application artifact",
+      "level": "system",
+      "status": "draft",
+      "description": "ApplicationArtifact stores artifacts related to an Application, such as outreach message, contact, or email inbox evidence. Status lifecycle depends on artifact type.",
+      "models": [{"name": "application_artifact", "fields": ["id", "application_id", "type", "content", "status"]}],
+      "acs": [
+        {"id": "AC-MODEL-22-01", "spec_id": "SPEC-MODEL-22-APPLICATION-ARTIFACT", "slug": "can-persist-application-artifact", "title": "System can persist ApplicationArtifact", "review": "automated", "risk": "medium", "concerns": ["type-specific status lifecycle"], "intent": "Given an Application and valid artifact type/content/status, the system persists an ApplicationArtifact row."},
+        {"id": "AC-MODEL-22-02", "spec_id": "SPEC-MODEL-22-APPLICATION-ARTIFACT", "slug": "outreach-message-status-transition-is-valid", "title": "Outreach message status transition is valid", "review": "automated", "risk": "medium", "concerns": ["message sent without approval"], "intent": "Outreach messages must follow draft -> draft_accepted/draft_rejected -> processing -> message_sent -> waiting_response -> success/no_response."}
+      ]
+    },
+    {
+      "id": "SPEC-MODEL-23-COMPANY-RESEARCH",
+      "slug": "model/company-research",
+      "title": "Company research",
+      "level": "system",
+      "status": "draft",
+      "description": "CompanyResearch stores structured research tasks for a company, such as employees, problem statement, products, or blog.",
+      "models": [{"name": "company_research", "fields": ["id", "company_id", "type", "status", "content"]}],
+      "acs": [
+        {"id": "AC-MODEL-23-01", "spec_id": "SPEC-MODEL-23-COMPANY-RESEARCH", "slug": "can-persist-company-research", "title": "System can persist CompanyResearch", "review": "automated", "risk": "medium", "concerns": ["research type enum", "status lifecycle"], "intent": "Given a Company and valid research type/status/content, the system persists a CompanyResearch row."},
+        {"id": "AC-MODEL-23-02", "spec_id": "SPEC-MODEL-23-COMPANY-RESEARCH", "slug": "research-status-transition-is-valid", "title": "CompanyResearch status transition is valid", "review": "automated", "risk": "medium", "concerns": ["unreviewed research marked completed"], "intent": "Research status must follow draft -> in_progress -> review -> completed/rejected."}
+      ]
+    },
+    {
+      "id": "SPEC-MODEL-24-COMPANY-INSIGHT",
+      "slug": "model/company-insight",
+      "title": "Company insight",
+      "level": "system",
+      "status": "draft",
+      "description": "CompanyInsight stores durable insights extracted from research, linked to a company.",
+      "models": [{"name": "company_insight", "fields": ["id", "company_id", "insight_type", "content"]}],
+      "acs": [
+        {"id": "AC-MODEL-24-01", "spec_id": "SPEC-MODEL-24-COMPANY-INSIGHT", "slug": "can-persist-company-insight", "title": "System can persist CompanyInsight", "review": "automated", "risk": "low", "concerns": ["insight type enum"], "intent": "Given a Company and insight content, the system persists a CompanyInsight row."},
+        {"id": "AC-MODEL-24-02", "spec_id": "SPEC-MODEL-24-COMPANY-INSIGHT", "slug": "insight-content-is-required", "title": "CompanyInsight content is required", "review": "automated", "risk": "low", "concerns": ["empty insight"], "intent": "An insight row cannot be persisted without content JSON."}
+      ]
+    },
+    {
+      "id": "SPEC-MODEL-25-EVENT",
+      "slug": "model/event",
+      "title": "Event",
+      "level": "system",
+      "status": "draft",
+      "description": "Event stores append-only evidence of system actions. Event type includes fetch, application, application_submit, job, and interview. Source is a string and payload is JSON.",
+      "models": [{"name": "event", "fields": ["id", "type", "source", "payload", "timestamp"]}],
+      "acs": [
+        {"id": "AC-MODEL-25-01", "spec_id": "SPEC-MODEL-25-EVENT", "slug": "can-append-event", "title": "System can append Event", "review": "automated", "risk": "medium", "concerns": ["audit trail"], "intent": "Given event type, source, payload, and timestamp, the system appends an Event row."},
+        {"id": "AC-MODEL-25-02", "spec_id": "SPEC-MODEL-25-EVENT", "slug": "events-are-append-only", "title": "Events are append-only", "review": "automated", "risk": "high", "concerns": ["lost evidence", "mutable audit trail"], "intent": "Existing events should not be updated or destroyed through normal application flows."},
+        {"id": "AC-MODEL-25-03", "spec_id": "SPEC-MODEL-25-EVENT", "slug": "timestamp-is-utc-iso8601", "title": "Event timestamp is UTC ISO 8601", "review": "automated", "risk": "low", "concerns": ["time ambiguity"], "intent": "Event timestamps are stored in UTC and serialized as ISO 8601."}
+      ]
+    },
+    {
+      "id": "SPEC-PROCESS-01-ADD-SOURCE",
+      "slug": "process/add-new-source",
+      "title": "Add new job/company source",
+      "level": "system",
+      "status": "draft",
+      "description": "Add a new Source for fetching recent jobs or companies. M0 assumes source data is deduped enough and does not solve cross-source deduplication.",
+      "acs": [
+        {"id": "AC-PROCESS-01-01", "spec_id": "SPEC-PROCESS-01-ADD-SOURCE", "slug": "create-and-store-new-valid-source", "title": "System can create and store new valid Source", "review": "automated", "risk": "medium", "concerns": ["required fields", "enum validation"], "intent": "Given type, base_url, adapter, auth_mode, and enabled, the system creates exactly one Source row."},
+        {"id": "AC-PROCESS-01-02", "spec_id": "SPEC-PROCESS-01-ADD-SOURCE", "slug": "invalid-source-is-not-persisted", "title": "Invalid Source is not persisted", "review": "automated", "risk": "low", "concerns": ["partial writes"], "intent": "If source attributes are invalid, no Source row is created."}
+      ]
+    },
+    {
+      "id": "SPEC-PROCESS-02-CREATE-FETCH-RUN",
+      "slug": "process/create-fetch-run",
+      "title": "Create fetch run for source",
+      "level": "system",
+      "status": "draft",
+      "description": "Create a FetchRun for an enabled Source and emit an Event of type fetch.",
+      "acs": [
+        {"id": "AC-PROCESS-02-01", "spec_id": "SPEC-PROCESS-02-CREATE-FETCH-RUN", "slug": "create-fetch-run-for-enabled-source", "title": "System creates FetchRun for enabled Source", "review": "automated", "risk": "medium", "concerns": ["disabled source guard"], "intent": "Given an enabled Source, system creates +1 FetchRun with status new and +1 Event type fetch."},
+        {"id": "AC-PROCESS-02-02", "spec_id": "SPEC-PROCESS-02-CREATE-FETCH-RUN", "slug": "disabled-source-does-not-create-fetch-run", "title": "Disabled Source does not create FetchRun", "review": "automated", "risk": "medium", "concerns": ["accidental fetch"], "intent": "Given a disabled Source, no FetchRun is created and an error event can be emitted."}
+      ]
+    },
+    {
+      "id": "SPEC-PROCESS-03-RUN-FETCH-RUN",
+      "slug": "process/run-fetch-run",
+      "title": "Run fetch run until completion",
+      "level": "system",
+      "status": "draft",
+      "description": "Execute a FetchRun using its adapter and update state until completed or failed. Handles happy path, adapter_not_found, invalid_source, retry_exhausted, and server_error.",
+      "acs": [
+        {"id": "AC-PROCESS-03-01", "spec_id": "SPEC-PROCESS-03-RUN-FETCH-RUN", "slug": "happy-path-imports-jobs-and-companies", "title": "Happy path imports jobs and companies", "review": "automated", "risk": "high", "concerns": ["transaction boundaries", "event evidence"], "intent": "Given valid adapter output, system creates company/job rows, updates FetchRun on workflow steps, and emits a final fetch event."},
+        {"id": "AC-PROCESS-03-02", "spec_id": "SPEC-PROCESS-03-RUN-FETCH-RUN", "slug": "adapter-not-found-fails-fetch-run", "title": "adapter_not_found fails FetchRun", "review": "automated", "risk": "medium", "concerns": ["missing adapter registry entry"], "intent": "If adapter cannot be resolved, FetchRun becomes failed and event.payload contains error message."},
+        {"id": "AC-PROCESS-03-03", "spec_id": "SPEC-PROCESS-03-RUN-FETCH-RUN", "slug": "invalid-source-fails-fetch-run", "title": "invalid_source fails FetchRun", "review": "automated", "risk": "medium", "concerns": ["bad base_url", "bad source state"], "intent": "If source is invalid for adapter, FetchRun becomes failed and event.payload contains error message."},
+        {"id": "AC-PROCESS-03-04", "spec_id": "SPEC-PROCESS-03-RUN-FETCH-RUN", "slug": "retry-exhausted-fails-fetch-run", "title": "retry_exhausted fails FetchRun", "review": "automated", "risk": "medium", "concerns": ["retry upper bound"], "intent": "If retries exceed max 3, FetchRun becomes failed and event.payload includes retry evidence."},
+        {"id": "AC-PROCESS-03-05", "spec_id": "SPEC-PROCESS-03-RUN-FETCH-RUN", "slug": "server-error-records-failure-evidence", "title": "server_error records failure evidence", "review": "automated", "risk": "medium", "concerns": ["HTTP errors", "partial data"], "intent": "Server errors are captured in FetchRun content and event payload."}
+      ]
+    },
+    {
+      "id": "SPEC-PROCESS-04-ADD-SKILLS-FROM-SEED",
+      "slug": "process/add-skill-from-seed-json",
+      "title": "Add skills from seed JSON",
+      "level": "system",
+      "status": "draft",
+      "description": "Import skills from known seed JSON into Skill rows.",
+      "acs": [
+        {"id": "AC-PROCESS-04-01", "spec_id": "SPEC-PROCESS-04-ADD-SKILLS-FROM-SEED", "slug": "creates-skill-rows-from-seed", "title": "System creates Skill rows from seed", "review": "automated", "risk": "low", "concerns": ["seed shape"], "intent": "Given valid seed JSON, system creates +x Skill rows."},
+        {"id": "AC-PROCESS-04-02", "spec_id": "SPEC-PROCESS-04-ADD-SKILLS-FROM-SEED", "slug": "seed-import-is-idempotent", "title": "Skill seed import is idempotent", "review": "automated", "risk": "medium", "concerns": ["duplicate skills"], "intent": "Running the same seed twice does not create duplicate normalized skills."}
+      ]
+    },
+    {
+      "id": "SPEC-PROCESS-05-ADD-RESUME",
+      "slug": "process/add-resume-json",
+      "title": "Add resume in JSON format",
+      "level": "system",
+      "status": "draft",
+      "description": "Add structured resume JSON, extract known experience shape, persist resume, experiences, resume_experience links, and experience_skill links.",
+      "acs": [
+        {"id": "AC-PROCESS-05-01", "spec_id": "SPEC-PROCESS-05-ADD-RESUME", "slug": "creates-resume-and-experience-graph", "title": "System creates Resume and extracted experience graph", "review": "automated", "risk": "high", "concerns": ["JSON parser", "transactionality", "skill matching"], "intent": "Given valid resume JSON, system creates +1 Resume, +x Experience, +x ResumeExperience, and +x ExperienceSkill rows."},
+        {"id": "AC-PROCESS-05-02", "spec_id": "SPEC-PROCESS-05-ADD-RESUME", "slug": "invalid-resume-json-rolls-back", "title": "Invalid resume JSON rolls back", "review": "automated", "risk": "medium", "concerns": ["partial writes"], "intent": "If resume JSON does not match the expected shape, no partial resume graph is persisted."}
+      ]
+    },
+    {
+      "id": "SPEC-PROCESS-06-RESEARCH-JOB",
+      "slug": "process/research-job",
+      "title": "Research job",
+      "level": "system",
+      "status": "draft",
+      "description": "Research a Job to extract applicant questions and mentioned skills, then link them immediately to the Job. Emits job events when research starts and succeeds or fails.",
+      "acs": [
+        {"id": "AC-PROCESS-06-01", "spec_id": "SPEC-PROCESS-06-RESEARCH-JOB", "slug": "extracts-questions-and-skills", "title": "System extracts questions and skills from Job", "review": "automated", "risk": "high", "concerns": ["parser quality", "false positives"], "intent": "Given a Job description/application page snapshot, system creates +x Question, +x JobQuestion, and +x JobSkill rows."},
+        {"id": "AC-PROCESS-06-02", "spec_id": "SPEC-PROCESS-06-RESEARCH-JOB", "slug": "research-emits-start-and-finish-events", "title": "Research emits start and finish events", "review": "automated", "risk": "medium", "concerns": ["evidence trail"], "intent": "Job research emits one event when started and one event when succeeded or failed."}
+      ]
+    },
+    {
+      "id": "SPEC-PROCESS-07-START-APPLICATION",
+      "slug": "process/start-application",
+      "title": "Start application for job",
+      "level": "system",
+      "status": "draft",
+      "description": "Create an Application for a Job and Resume, draft question responses, link them immediately, and emit application events for creation, draft start, draft finish/failure, and ready-for-submit review.",
+      "acs": [
+        {"id": "AC-PROCESS-07-01", "spec_id": "SPEC-PROCESS-07-START-APPLICATION", "slug": "creates-application-and-draft-responses", "title": "System creates Application and draft responses", "review": "automated", "risk": "high", "concerns": ["transactionality", "question coverage"], "intent": "Given Job, Resume, and linked JobQuestions, system creates +1 Application, +x draft QuestionResponse, and +x ApplicationQuestionResponse rows."},
+        {"id": "AC-PROCESS-07-02", "spec_id": "SPEC-PROCESS-07-START-APPLICATION", "slug": "start-application-emits-lifecycle-events", "title": "Start application emits lifecycle events", "review": "automated", "risk": "medium", "concerns": ["missing audit trail"], "intent": "System emits events for application record creation, draft start, draft success/failure, and ready-for-submit review."}
+      ]
+    },
+    {
+      "id": "SPEC-PROCESS-08-SUBMIT-APPLICATION",
+      "slug": "process/submit-application",
+      "title": "Submit application",
+      "level": "system",
+      "status": "draft",
+      "description": "Transition Application to approved_for_submit, then use job.apply_adapter and job.apply_url with resume/question context. M0 should implement a safe stub adapter unless a real adapter is explicitly requested and reviewed.",
+      "acs": [
+        {"id": "AC-PROCESS-08-01", "spec_id": "SPEC-PROCESS-08-SUBMIT-APPLICATION", "slug": "approved-application-can-run-apply-adapter", "title": "Approved Application can run apply adapter", "review": "automated", "risk": "high", "concerns": ["accidental live submit", "adapter evidence"], "intent": "Given an Application approved for submit, system runs apply adapter and emits application_submit start/finish/failure events."},
+        {"id": "AC-PROCESS-08-02", "spec_id": "SPEC-PROCESS-08-SUBMIT-APPLICATION", "slug": "unapproved-application-cannot-be-submitted", "title": "Unapproved Application cannot be submitted", "review": "automated", "risk": "high", "concerns": ["sending unreviewed applications"], "intent": "Application must not run submit adapter before approved_for_submit."},
+        {"id": "AC-PROCESS-08-03", "spec_id": "SPEC-PROCESS-08-SUBMIT-APPLICATION", "slug": "m0-submit-adapter-is-safe-stub", "title": "M0 submit adapter is safe stub", "review": "automated", "risk": "high", "concerns": ["external side effects"], "intent": "In M0, the default apply adapter records intended payload/evidence without submitting to external systems."}
+      ]
+    },
+    {
+      "id": "SPEC-DECISION-01-STACK",
+      "slug": "decision/stack-shore-rails",
+      "title": "Use Shore Rails template and adapt it for RSpec",
+      "level": "system",
+      "status": "draft",
+      "description": "Use https://github.com/yatish27/shore as the initial Rails template to avoid inventing boilerplate. Adapt testing from Minitest to RSpec + FactoryBot.",
+      "decision": {
+        "template": "https://github.com/yatish27/shore",
+        "template_reference_sha": "0211486b9b350cca0a25ce608601e960d61f985e",
+        "ruby": "4.0.1",
+        "rails": "8.1",
+        "db": "postgresql",
+        "frontend": "React + Inertia.js",
+        "assets": "vite_rails",
+        "package_manager": "Bun",
+        "jobs": "Solid Queue",
+        "cache": "Solid Cache",
+        "websockets": "Solid Cable",
+        "ci": "GitHub Actions"
+      },
+      "acs": [
+        {"id": "AC-DECISION-01-01", "spec_id": "SPEC-DECISION-01-STACK", "slug": "shore-reference-is-recorded", "title": "Shore template reference is recorded", "review": "automated", "risk": "low", "concerns": ["template provenance"], "intent": "Repo records the Shore reference URL and SHA in docs or metadata."},
+        {"id": "AC-DECISION-01-02", "spec_id": "SPEC-DECISION-01-STACK", "slug": "ruby-version-is-4-0-1", "title": "Ruby version is 4.0.1", "review": "automated", "risk": "medium", "concerns": ["version availability"], "intent": "Project declares Ruby 4.0.1 in version files and CI."},
+        {"id": "AC-DECISION-01-03", "spec_id": "SPEC-DECISION-01-STACK", "slug": "rails-version-is-8-1", "title": "Rails version is 8.1", "review": "automated", "risk": "medium", "concerns": ["version availability"], "intent": "Gemfile resolves Rails 8.1."},
+        {"id": "AC-DECISION-01-04", "spec_id": "SPEC-DECISION-01-STACK", "slug": "standardrb-rubocop-is-configured", "title": "StandardRB/RuboCop is configured", "review": "automated", "risk": "low", "concerns": ["style drift"], "intent": "CI can run Ruby linting using StandardRB/RuboCop config."},
+        {"id": "AC-DECISION-01-05", "spec_id": "SPEC-DECISION-01-STACK", "slug": "rspec-and-factorybot-are-default", "title": "RSpec and FactoryBot are default test stack", "review": "automated", "risk": "medium", "concerns": ["Minitest leftovers"], "intent": "RSpec and FactoryBot are installed, configured, and template references to Minitest are removed unless intentionally used for tiny unit tests."},
+        {"id": "AC-DECISION-01-06", "spec_id": "SPEC-DECISION-01-STACK", "slug": "postgresql-is-configured", "title": "PostgreSQL is configured", "review": "automated", "risk": "medium", "concerns": ["local dev DB"], "intent": "Rails database config uses PostgreSQL for development and test."},
+        {"id": "AC-DECISION-01-07", "spec_id": "SPEC-DECISION-01-STACK", "slug": "react-inertia-vite-bun-are-configured", "title": "React, Inertia, Vite, and Bun are configured", "review": "automated", "risk": "medium", "concerns": ["frontend boot"], "intent": "Project can build and serve a minimal React/Inertia page through vite_rails using Bun."},
+        {"id": "AC-DECISION-01-08", "spec_id": "SPEC-DECISION-01-STACK", "slug": "solid-stack-is-configured", "title": "Solid Queue/Cache/Cable are configured", "review": "automated", "risk": "medium", "concerns": ["background jobs", "cache", "websocket defaults"], "intent": "Rails app includes Solid Queue, Solid Cache, and Solid Cable configuration."},
+        {"id": "AC-DECISION-01-09", "spec_id": "SPEC-DECISION-01-STACK", "slug": "github-actions-runs-checks", "title": "GitHub Actions runs checks", "review": "automated", "risk": "medium", "concerns": ["CI drift"], "intent": "CI runs tests, linting, and security checks."}
+      ]
+    },
+    {
+      "id": "SPEC-DECISION-02-LOCAL-DEPLOYMENT",
+      "slug": "decision/local-deployment-caddy-docker",
+      "title": "Localhost deployment via Caddy reverse proxy and Docker Compose",
+      "level": "system",
+      "status": "draft",
+      "description": "Run the app locally through Docker Compose and an existing external Caddy proxy network. App should be reachable via job-tracker.home.br11k.dev, not direct exposed ports.",
+      "acs": [
+        {"id": "AC-DECISION-02-01", "spec_id": "SPEC-DECISION-02-LOCAL-DEPLOYMENT", "slug": "docker-containers-are-healthy", "title": "Docker containers are healthy", "review": "automated", "risk": "medium", "concerns": ["dev env reproducibility"], "intent": "docker compose reports healthy/running containers for web and required services."},
+        {"id": "AC-DECISION-02-02", "spec_id": "SPEC-DECISION-02-LOCAL-DEPLOYMENT", "slug": "no-direct-host-port-exposure", "title": "Containers are not reachable by direct host ports", "review": "automated", "risk": "medium", "concerns": ["accidental public surface"], "intent": "Compose config should avoid exposing app ports to host except through the external proxy network."},
+        {"id": "AC-DECISION-02-03", "spec_id": "SPEC-DECISION-02-LOCAL-DEPLOYMENT", "slug": "local-hostname-resolves-and-serves-app", "title": "Local hostname resolves and serves app", "review": "automated", "risk": "medium", "concerns": ["Caddy labels", "DNS"], "intent": "job-tracker.home.br11k.dev resolves locally and returns a successful HTTP response through Caddy."},
+        {"id": "AC-DECISION-02-04", "spec_id": "SPEC-DECISION-02-LOCAL-DEPLOYMENT", "slug": "external-access-check-is-documented", "title": "External access check is documented", "review": "manual", "risk": "medium", "concerns": ["hard to verify from local-only test"], "intent": "Project documents how to verify the local hostname is not accessible from outside the LAN. Automated check may be deferred."}
+      ]
+    },
+    {
+      "id": "SPEC-DECISION-03-COHERENCE-PROVISIONING",
+      "slug": "decision/coherence-db-project-provisioning",
+      "title": "Coherence DB/project must be provisioned and available from host",
+      "level": "system",
+      "status": "draft",
+      "description": "Development workflow assumes coherence-core-db is installed and can run catalog preflight and DB ping via socket.",
+      "acs": [
+        {"id": "AC-DECISION-03-01", "spec_id": "SPEC-DECISION-03-COHERENCE-PROVISIONING", "slug": "coherence-core-db-version-is-0-2-0", "title": "coherence-core-db version is 0.2.0", "review": "automated", "risk": "medium", "concerns": ["tool drift"], "intent": "coherence-core-db --version prints coherence-core-db 0.2.0."},
+        {"id": "AC-DECISION-03-02", "spec_id": "SPEC-DECISION-03-COHERENCE-PROVISIONING", "slug": "catalog-preflight-is-ok", "title": "catalog-preflight is ok", "review": "automated", "risk": "medium", "concerns": ["project catalog setup"], "intent": "coherence-core-db project catalog-preflight returns catalog-preflight: ok."},
+        {"id": "AC-DECISION-03-03", "spec_id": "SPEC-DECISION-03-COHERENCE-PROVISIONING", "slug": "db-ping-socket-is-ok", "title": "db-ping socket is ok", "review": "automated", "risk": "medium", "concerns": ["DB socket availability"], "intent": "coherence-core-db db-ping returns db-ping: ok using socket."}
+      ]
+    },
+    {
+      "id": "SPEC-DECISION-04-TESTING-STRATEGY",
+      "slug": "decision/testing-strategy-rspec-factorybot-coherence",
+      "title": "Testing strategy uses RSpec/FactoryBot and Coherence specs",
+      "level": "system",
+      "status": "draft",
+      "description": "Use model specs/ACs to define valid business objects. Prefer RSpec + FactoryBot for Rails app behavior. Very small pure Ruby unit tests may use Minitest only if intentionally isolated and documented.",
+      "acs": [
+        {"id": "AC-DECISION-04-01", "spec_id": "SPEC-DECISION-04-TESTING-STRATEGY", "slug": "model-validity-is-covered-by-rspec", "title": "Model validity is covered by RSpec", "review": "automated", "risk": "high", "concerns": ["schema without behavior"], "intent": "Each model spec has at least one RSpec example covering valid persistence and key validation/transition ACs."},
+        {"id": "AC-DECISION-04-02", "spec_id": "SPEC-DECISION-04-TESTING-STRATEGY", "slug": "factorybot-has-valid-factories", "title": "FactoryBot has valid factories", "review": "automated", "risk": "medium", "concerns": ["test setup friction"], "intent": "FactoryBot defines valid factories for each model that can build and create records."},
+        {"id": "AC-DECISION-04-03", "spec_id": "SPEC-DECISION-04-TESTING-STRATEGY", "slug": "coherence-specs-map-to-test-files", "title": "Coherence specs map to test files", "review": "automated", "risk": "medium", "concerns": ["lost traceability"], "intent": "Each spec/AC can be traced to at least one test file or explicitly marked manual/deferred."}
+      ]
+    }
+  ],
+  "bead_tasks": [
+    {
+      "id": "JT-M0-001",
+      "title": "Bootstrap Shore Rails app",
+      "type": "feature",
+      "priority": 1,
+      "spec_refs": ["SPEC-DECISION-01-STACK"],
+      "ac_refs": ["AC-DECISION-01-01", "AC-DECISION-01-02", "AC-DECISION-01-03", "AC-DECISION-01-06", "AC-DECISION-01-07", "AC-DECISION-01-08"],
+      "description": "Create the initial job-tracker Rails app from the Shore template reference or reproduce its required shape. Keep the repo runnable locally before adding domain models.",
+      "deliverables": [
+        "Rails app exists and boots locally.",
+        "Ruby/Rails/PostgreSQL/React/Inertia/Vite/Bun/Solid stack is declared.",
+        "Shore template URL and reference SHA are recorded.",
+        "bin/setup or equivalent local setup command works or documents blockers.",
+        "Initial README/AGENTS commands are added."
+      ]
+    },
+    {
+      "id": "JT-M0-002",
+      "title": "Replace default tests with RSpec and FactoryBot",
+      "type": "feature",
+      "priority": 2,
+      "spec_refs": ["SPEC-DECISION-01-STACK", "SPEC-DECISION-04-TESTING-STRATEGY"],
+      "ac_refs": ["AC-DECISION-01-04", "AC-DECISION-01-05", "AC-DECISION-04-01", "AC-DECISION-04-02"],
+      "description": "Install and configure RSpec, FactoryBot, and StandardRB/RuboCop. Remove accidental Minitest defaults unless intentionally documented.",
+      "deliverables": [
+        "RSpec runs with at least one smoke spec.",
+        "FactoryBot is configured and loaded in specs.",
+        "StandardRB/RuboCop command is available.",
+        "Minitest references are removed or explicitly justified.",
+        "CI/test commands are documented."
+      ]
+    },
+    {
+      "id": "JT-M0-003",
+      "title": "Provision Coherence project checks",
+      "type": "feature",
+      "priority": 3,
+      "spec_refs": ["SPEC-DECISION-03-COHERENCE-PROVISIONING"],
+      "ac_refs": ["AC-DECISION-03-01", "AC-DECISION-03-02", "AC-DECISION-03-03"],
+      "description": "Add project-level commands/scripts that verify coherence-core-db availability from the host.",
+      "deliverables": [
+        "A documented command checks coherence-core-db --version.",
+        "A documented command runs catalog-preflight.",
+        "A documented command runs db-ping via socket.",
+        "Failures are reported truthfully as blockers/degraded state.",
+        "Results are referenced from AGENTS/README."
+      ]
+    },
+    {
+      "id": "JT-M0-004",
+      "title": "Implement Source and FetchRun models",
+      "type": "feature",
+      "priority": 4,
+      "spec_refs": ["SPEC-MODEL-00-SOURCE"],
+      "ac_refs": ["AC-MODEL-00-01", "AC-MODEL-00-02", "AC-MODEL-00-03"],
+      "description": "Create source and fetch_run tables, models, enums, validations, associations, and factories.",
+      "deliverables": [
+        "Migration creates sources and fetch_runs with FK/indexes.",
+        "Models validate required fields and enums.",
+        "FetchRun defaults to retry 0 and status new.",
+        "Factories build valid Source and FetchRun records.",
+        "RSpec covers all listed ACs."
+      ]
+    },
+    {
+      "id": "JT-M0-005",
+      "title": "Implement Company model",
+      "type": "feature",
+      "priority": 5,
+      "spec_refs": ["SPEC-MODEL-01-COMPANY"],
+      "ac_refs": ["AC-MODEL-01-01", "AC-MODEL-01-02"],
+      "description": "Create company persistence linked to source with URL validation semantics.",
+      "deliverables": [
+        "Migration creates companies with source FK.",
+        "Company model validates name and URL-like fields.",
+        "Factory creates a valid company from a source.",
+        "RSpec covers valid persistence and malformed URL rejection.",
+        "Schema/index choices are documented if non-obvious."
+      ]
+    },
+    {
+      "id": "JT-M0-006",
+      "title": "Implement Resume and Experience models",
+      "type": "feature",
+      "priority": 6,
+      "spec_refs": ["SPEC-MODEL-02-RESUME", "SPEC-MODEL-03-EXPERIENCE", "SPEC-MODEL-04-RESUME-EXPERIENCE"],
+      "ac_refs": ["AC-MODEL-02-01", "AC-MODEL-02-02", "AC-MODEL-03-01", "AC-MODEL-03-02", "AC-MODEL-04-01", "AC-MODEL-04-02"],
+      "description": "Implement resume JSON storage, experience records, and resume_experience join semantics.",
+      "deliverables": [
+        "Migrations create resumes, experiences, and resume_experiences.",
+        "Resume requires structured JSON.",
+        "Experience validates date ranges.",
+        "ResumeExperience has FK constraints and duplicate guard.",
+        "Factories and RSpec cover listed ACs."
+      ]
+    },
+    {
+      "id": "JT-M0-007",
+      "title": "Implement Skill and ExperienceSkill models",
+      "type": "feature",
+      "priority": 7,
+      "spec_refs": ["SPEC-MODEL-05-SKILL", "SPEC-MODEL-06-EXPERIENCE-SKILL"],
+      "ac_refs": ["AC-MODEL-05-01", "AC-MODEL-05-02", "AC-MODEL-06-01", "AC-MODEL-06-02"],
+      "description": "Implement normalized skill persistence and links from experiences to skills.",
+      "deliverables": [
+        "Migrations create skills and experience_skills.",
+        "Skill type enum/validation is implemented.",
+        "Normalized skill duplicate guard exists.",
+        "ExperienceSkill has FK constraints and duplicate guard.",
+        "Factories and RSpec cover listed ACs."
+      ]
+    },
+    {
+      "id": "JT-M0-008",
+      "title": "Implement ExperienceStory model",
+      "type": "feature",
+      "priority": 8,
+      "spec_refs": ["SPEC-MODEL-07-EXPERIENCE-STORY"],
+      "ac_refs": ["AC-MODEL-07-01", "AC-MODEL-07-02"],
+      "description": "Store STAR stories attached to experiences for later application response generation.",
+      "deliverables": [
+        "Migration creates experience_stories.",
+        "Model belongs to Experience.",
+        "Action and result are required.",
+        "Factory creates a valid STAR story.",
+        "RSpec covers valid persistence and required fields."
+      ]
+    },
+    {
+      "id": "JT-M0-009",
+      "title": "Implement Question and QuestionResponse models",
+      "type": "feature",
+      "priority": 9,
+      "spec_refs": ["SPEC-MODEL-08-QUESTION", "SPEC-MODEL-09-QUESTION-RESPONSE"],
+      "ac_refs": ["AC-MODEL-08-01", "AC-MODEL-08-02", "AC-MODEL-09-01", "AC-MODEL-09-02"],
+      "description": "Implement reusable applicant questions and draft/approved answer records.",
+      "deliverables": [
+        "Migrations create questions and question_responses.",
+        "Question validates concern/response_type and text presence.",
+        "QuestionResponse validates type/status lifecycle basics.",
+        "Approved response requires content.",
+        "Factories and RSpec cover listed ACs."
+      ]
+    },
+    {
+      "id": "JT-M0-010",
+      "title": "Implement Job, JobSkill, and JobQuestion models",
+      "type": "feature",
+      "priority": 10,
+      "spec_refs": ["SPEC-MODEL-10-JOB", "SPEC-MODEL-11-JOB-SKILL", "SPEC-MODEL-12-JOB-QUESTION"],
+      "ac_refs": ["AC-MODEL-10-01", "AC-MODEL-10-02", "AC-MODEL-10-03", "AC-MODEL-11-01", "AC-MODEL-11-02", "AC-MODEL-12-01", "AC-MODEL-12-02"],
+      "description": "Implement normalized job records and links to extracted skills/questions.",
+      "deliverables": [
+        "Migrations create jobs, job_skills, and job_questions.",
+        "Job validates source/company/canonical_id/apply_url/status.",
+        "canonical_id is unique per source.",
+        "Skipped jobs require skip_reason.",
+        "Join tables have duplicate guards, factories, and specs."
+      ]
+    },
+    {
+      "id": "JT-M0-011",
+      "title": "Implement Application and ApplicationQuestionResponse models",
+      "type": "feature",
+      "priority": 11,
+      "spec_refs": ["SPEC-MODEL-13-APPLICATION", "SPEC-MODEL-14-APPLICATION-QUESTION-RESPONSE"],
+      "ac_refs": ["AC-MODEL-13-01", "AC-MODEL-13-02", "AC-MODEL-13-03", "AC-MODEL-14-01", "AC-MODEL-14-02"],
+      "description": "Implement application funnel state linked to jobs, resumes, and question responses.",
+      "deliverables": [
+        "Migrations create applications and application_question_responses.",
+        "Application status transition guard exists.",
+        "Only one active application per job is enforced.",
+        "ApplicationQuestionResponse duplicate guard exists.",
+        "Factories and RSpec cover listed ACs."
+      ]
+    },
+    {
+      "id": "JT-M0-012",
+      "title": "Implement Interview models",
+      "type": "feature",
+      "priority": 12,
+      "spec_refs": ["SPEC-MODEL-15-JOB-INTERVIEW-STAGE", "SPEC-MODEL-16-INTERVIEW", "SPEC-MODEL-17-INTERVIEW-ARTIFACT"],
+      "ac_refs": ["AC-MODEL-15-01", "AC-MODEL-15-02", "AC-MODEL-16-01", "AC-MODEL-16-02", "AC-MODEL-17-01", "AC-MODEL-17-02"],
+      "description": "Implement interview stages, scheduled interviews, and interview artifacts.",
+      "deliverables": [
+        "Migrations create job_interview_stages, interviews, and interview_artifacts.",
+        "Stage order is unique per job.",
+        "Completed interview requires success/reject result.",
+        "InterviewArtifact requires content/reference.",
+        "Factories and RSpec cover listed ACs."
+      ]
+    },
+    {
+      "id": "JT-M0-013",
+      "title": "Implement Person and company/person link models",
+      "type": "feature",
+      "priority": 13,
+      "spec_refs": ["SPEC-MODEL-18-PERSON", "SPEC-MODEL-19-INTERVIEW-PERSON", "SPEC-MODEL-20-COMPANY-EMPLOYEE", "SPEC-MODEL-21-COMPANY-RECRUITER"],
+      "ac_refs": ["AC-MODEL-18-01", "AC-MODEL-18-02", "AC-MODEL-19-01", "AC-MODEL-19-02", "AC-MODEL-20-01", "AC-MODEL-20-02", "AC-MODEL-21-01", "AC-MODEL-21-02"],
+      "description": "Implement contacts, interview participants, employees, and recruiters.",
+      "deliverables": [
+        "Migrations create people and link tables.",
+        "Person validates email/URL-like fields where present.",
+        "InterviewPerson and CompanyRecruiter duplicate guards exist.",
+        "CompanyEmployee requires role.",
+        "Factories and RSpec cover listed ACs."
+      ]
+    },
+    {
+      "id": "JT-M0-014",
+      "title": "Implement application artifacts and company research models",
+      "type": "feature",
+      "priority": 14,
+      "spec_refs": ["SPEC-MODEL-22-APPLICATION-ARTIFACT", "SPEC-MODEL-23-COMPANY-RESEARCH", "SPEC-MODEL-24-COMPANY-INSIGHT"],
+      "ac_refs": ["AC-MODEL-22-01", "AC-MODEL-22-02", "AC-MODEL-23-01", "AC-MODEL-23-02", "AC-MODEL-24-01", "AC-MODEL-24-02"],
+      "description": "Implement application artifacts, company research workflow rows, and durable company insights.",
+      "deliverables": [
+        "Migrations create application_artifacts, company_researches, and company_insights.",
+        "ApplicationArtifact validates type-specific status lifecycle for outreach_message.",
+        "CompanyResearch validates draft -> in_progress -> review -> completed/rejected lifecycle.",
+        "CompanyInsight requires content JSON.",
+        "Factories and RSpec cover listed ACs."
+      ]
+    },
+    {
+      "id": "JT-M0-015",
+      "title": "Implement append-only Event model",
+      "type": "feature",
+      "priority": 15,
+      "spec_refs": ["SPEC-MODEL-25-EVENT"],
+      "ac_refs": ["AC-MODEL-25-01", "AC-MODEL-25-02", "AC-MODEL-25-03"],
+      "description": "Implement append-only audit/evidence events used by all process services.",
+      "deliverables": [
+        "Migration creates events with type/source/payload/timestamp.",
+        "Event validates type and UTC timestamp semantics.",
+        "Normal app flows cannot update or destroy events.",
+        "Factory creates valid events.",
+        "RSpec covers append, timestamp, and immutability ACs."
+      ]
+    },
+    {
+      "id": "JT-M0-016",
+      "title": "Implement AddSource service",
+      "type": "feature",
+      "priority": 16,
+      "spec_refs": ["SPEC-PROCESS-01-ADD-SOURCE"],
+      "ac_refs": ["AC-PROCESS-01-01", "AC-PROCESS-01-02"],
+      "description": "Create service object for adding valid sources with transactional behavior and clear errors.",
+      "deliverables": [
+        "Service creates exactly one Source for valid input.",
+        "Invalid input creates no Source row.",
+        "Service result object exposes success/error details.",
+        "Service specs cover happy and invalid cases.",
+        "Command or Rails console example is documented."
+      ]
+    },
+    {
+      "id": "JT-M0-017",
+      "title": "Implement CreateFetchRun service",
+      "type": "feature",
+      "priority": 17,
+      "spec_refs": ["SPEC-PROCESS-02-CREATE-FETCH-RUN"],
+      "ac_refs": ["AC-PROCESS-02-01", "AC-PROCESS-02-02"],
+      "description": "Create service object for provisioning fetch runs and fetch events from enabled sources.",
+      "deliverables": [
+        "Enabled Source creates +1 FetchRun with status new.",
+        "Enabled Source creates +1 Event of type fetch.",
+        "Disabled Source does not create FetchRun.",
+        "Disabled Source failure is represented consistently.",
+        "Service specs cover both ACs."
+      ]
+    },
+    {
+      "id": "JT-M0-018",
+      "title": "Implement adapter registry and safe fetch stubs",
+      "type": "feature",
+      "priority": 18,
+      "spec_refs": ["SPEC-PROCESS-03-RUN-FETCH-RUN"],
+      "ac_refs": ["AC-PROCESS-03-02", "AC-PROCESS-03-03", "AC-PROCESS-03-04", "AC-PROCESS-03-05"],
+      "description": "Build the adapter registry and stub adapters needed to test fetch-run failure modes before real external adapters exist.",
+      "deliverables": [
+        "Adapter registry resolves known adapter names.",
+        "Unknown adapter produces adapter_not_found failure.",
+        "Invalid source produces invalid_source failure.",
+        "Retry exhaustion is capped at max 3.",
+        "Server error evidence is persisted in FetchRun content and Event payload."
+      ]
+    },
+    {
+      "id": "JT-M0-019",
+      "title": "Implement RunFetchRun happy path",
+      "type": "feature",
+      "priority": 19,
+      "spec_refs": ["SPEC-PROCESS-03-RUN-FETCH-RUN"],
+      "ac_refs": ["AC-PROCESS-03-01"],
+      "description": "Execute a fetch run against a deterministic fake adapter and import companies/jobs transactionally.",
+      "deliverables": [
+        "Fake adapter returns normalized company/job payloads.",
+        "RunFetchRun creates expected Company and Job rows.",
+        "FetchRun status updates through in_progress to completed.",
+        "Final fetch Event includes imported counts/evidence.",
+        "Service spec covers row deltas and event payload."
+      ]
+    },
+    {
+      "id": "JT-M0-020",
+      "title": "Implement skill seed import",
+      "type": "feature",
+      "priority": 20,
+      "spec_refs": ["SPEC-PROCESS-04-ADD-SKILLS-FROM-SEED"],
+      "ac_refs": ["AC-PROCESS-04-01", "AC-PROCESS-04-02"],
+      "description": "Import skills from a known seed JSON format idempotently.",
+      "deliverables": [
+        "Seed JSON fixture exists for common SWE skills.",
+        "Importer creates +x Skill rows from valid seed.",
+        "Importer is idempotent on repeated runs.",
+        "Invalid seed errors are clear and do not partially import.",
+        "Service specs cover creation and idempotency."
+      ]
+    },
+    {
+      "id": "JT-M0-021",
+      "title": "Implement resume JSON import",
+      "type": "feature",
+      "priority": 21,
+      "spec_refs": ["SPEC-PROCESS-05-ADD-RESUME"],
+      "ac_refs": ["AC-PROCESS-05-01", "AC-PROCESS-05-02"],
+      "description": "Add structured resume JSON import that creates resume, experiences, links, and experience-skill links.",
+      "deliverables": [
+        "Sample resume JSON fixture exists.",
+        "Importer creates +1 Resume and expected experience graph.",
+        "Importer links parsed experiences back to resume.",
+        "Importer links experience skills where skills exist or are created by policy.",
+        "Invalid JSON rolls back all partial writes."
+      ]
+    },
+    {
+      "id": "JT-M0-022",
+      "title": "Implement job research service",
+      "type": "feature",
+      "priority": 22,
+      "spec_refs": ["SPEC-PROCESS-06-RESEARCH-JOB"],
+      "ac_refs": ["AC-PROCESS-06-01", "AC-PROCESS-06-02"],
+      "description": "Research a job using deterministic M0 extraction from job description/application fixture, creating questions/skills and events.",
+      "deliverables": [
+        "ResearchJob service creates Question rows from fixture/extractor output.",
+        "ResearchJob creates JobQuestion links immediately.",
+        "ResearchJob creates JobSkill links for mentioned skills.",
+        "Start and finish/failure job Events are emitted.",
+        "Service specs cover happy and failure evidence."
+      ]
+    },
+    {
+      "id": "JT-M0-023",
+      "title": "Implement start application service",
+      "type": "feature",
+      "priority": 23,
+      "spec_refs": ["SPEC-PROCESS-07-START-APPLICATION"],
+      "ac_refs": ["AC-PROCESS-07-01", "AC-PROCESS-07-02"],
+      "description": "Create an application, draft responses for linked job questions, link responses, and emit application lifecycle events.",
+      "deliverables": [
+        "StartApplication creates +1 Application.",
+        "Draft QuestionResponse rows are created for job questions.",
+        "ApplicationQuestionResponse links are created immediately.",
+        "Lifecycle Events are emitted for create/draft/ready states.",
+        "Service specs cover row deltas and event sequence."
+      ]
+    },
+    {
+      "id": "JT-M0-024",
+      "title": "Implement safe submit application service",
+      "type": "feature",
+      "priority": 24,
+      "spec_refs": ["SPEC-PROCESS-08-SUBMIT-APPLICATION"],
+      "ac_refs": ["AC-PROCESS-08-01", "AC-PROCESS-08-02", "AC-PROCESS-08-03"],
+      "description": "Implement submit flow with explicit approval requirement and safe stub adapter only for M0.",
+      "deliverables": [
+        "Unapproved applications cannot run submit adapter.",
+        "Approved applications run only the safe stub adapter by default.",
+        "application_submit start/finish/failure Events are emitted.",
+        "Stub adapter records intended payload/evidence without external submit.",
+        "Service specs prove no external side effect is invoked."
+      ]
+    },
+    {
+      "id": "JT-M0-025",
+      "title": "Add AC traceability helpers",
+      "type": "feature",
+      "priority": 25,
+      "spec_refs": ["SPEC-DECISION-04-TESTING-STRATEGY"],
+      "ac_refs": ["AC-DECISION-04-03"],
+      "description": "Make it easy to see which RSpec examples cover which ACs.",
+      "deliverables": [
+        "RSpec metadata convention for AC IDs is documented.",
+        "Existing specs tag examples with ac IDs or comments.",
+        "A simple script/report lists AC IDs found in specs.",
+        "Deferred/manual ACs are explicitly listed.",
+        "Traceability report is included in final output."
+      ]
+    },
+    {
+      "id": "JT-M0-026",
+      "title": "Add local Docker Compose and Caddy integration",
+      "type": "feature",
+      "priority": 26,
+      "spec_refs": ["SPEC-DECISION-02-LOCAL-DEPLOYMENT"],
+      "ac_refs": ["AC-DECISION-02-01", "AC-DECISION-02-02", "AC-DECISION-02-03", "AC-DECISION-02-04"],
+      "description": "Package local runtime behind existing external Caddy proxy network using job-tracker.home.br11k.dev.",
+      "deliverables": [
+        "docker-compose.yml uses name: job-tracker.",
+        "Web service has Caddy labels for job-tracker.home.br11k.dev.",
+        "Services attach to external proxy network.",
+        "App ports are not directly exposed by default.",
+        "Docs describe health, local hostname check, and manual external-access check."
+      ]
+    },
+    {
+      "id": "JT-M0-027",
+      "title": "Add GitHub Actions CI",
+      "type": "feature",
+      "priority": 27,
+      "spec_refs": ["SPEC-DECISION-01-STACK"],
+      "ac_refs": ["AC-DECISION-01-09"],
+      "description": "Add CI for tests, linting, and available security checks.",
+      "deliverables": [
+        "GitHub Actions workflow installs Ruby/Bun dependencies.",
+        "CI prepares PostgreSQL test DB.",
+        "CI runs RSpec.",
+        "CI runs StandardRB/RuboCop.",
+        "CI runs security checks available from the template or documents deferred ones."
+      ]
+    },
+    {
+      "id": "JT-M0-028",
+      "title": "Run final M0 verification and present AC map",
+      "type": "verification",
+      "priority": 28,
+      "spec_refs": ["ALL"],
+      "ac_refs": ["ALL"],
+      "description": "Run the complete local verification suite and present what was implemented, deferred, or blocked.",
+      "deliverables": [
+        "bundle exec rspec result is reported.",
+        "lint result is reported.",
+        "db:migrate/db:prepare result is reported.",
+        "AC-to-test coverage map is generated or manually summarized.",
+        "Final changed-files summary and next recommended beads are provided."
+      ]
+    }
+  ],
+  "agent_prompt": "You are implementing M0 of the job-tracker project. Use this JSON as the source of truth. Build a local Rails app based on the Shore template reference if feasible, but prioritize satisfying the ACs over preserving template purity.\n\nGoal: create a Rails 8.1 / Ruby 4.0.1 / PostgreSQL app with React + Inertia + vite_rails + Bun, Solid Queue/Cache/Cable, RSpec + FactoryBot, StandardRB/RuboCop, GitHub Actions, and Docker Compose behind an external Caddy proxy network.\n\nImplementation rules:\n1. Create Rails models/migrations for every model spec in this JSON. Use Rails enums or explicit validators for all declared enum fields. Use JSONB for content/payload/json fields. Use FK constraints and useful unique indexes where ACs mention duplicate prevention.\n2. Implement the process services for adding sources, creating/running fetch runs, importing skills, adding resume JSON, researching jobs, starting applications, and submitting applications. For M0, submit application must use a safe stub adapter by default and must not send external applications.\n3. Emit Event rows for every process AC that requires evidence. Events are append-only. Do not provide normal app flows that update or destroy events.\n4. Add RSpec model specs and service specs for all automated ACs. Add FactoryBot factories for all models. Make tests readable and AC-traceable using comments or metadata like ac: 'AC-MODEL-10-01'.\n5. Keep implementation boring. Prefer Rails conventions, service objects, transactions for multi-row writes, and explicit state transition methods. Do not add browser crawling, external ATS adapters, or live auto-apply in M0 unless needed by an AC here.\n6. Add seed JSON import support for skills and a sample resume JSON fixture.\n7. Add Docker Compose using project name job-tracker and Caddy labels for job-tracker.home.br11k.dev on external network proxy. Do not expose app ports directly to host unless strictly required for local debugging and documented as disabled by default.\n8. Add README/AGENTS notes with commands to run: bin/setup, bin/rails db:prepare, bundle exec rspec, bundle exec standardrb, docker compose up.\n9. Add CI that runs bundle install, DB setup, RSpec, linting, and security checks available in the template.\n10. Before finishing, run tests/lint if possible, report exactly what passed/failed, list files changed, and map implemented ACs to tests.\n\nFirst task: create a short implementation plan with migration/model/service/test order. Then implement in small commits or staged chunks. Do not silently skip ACs; mark any deferred AC with a clear reason."
+}

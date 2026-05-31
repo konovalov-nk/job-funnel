@@ -1,0 +1,6 @@
+version = 2
+project_slug = "job-tracker"
+dolt_db_name = "job_tracker_b6db"
+frozen_git_toplevel = "/home/br11k/git/konovalov-nk/job-funnel/tracker"
+project_hash = "b6db"
+dolt_mode = "user-scoped"

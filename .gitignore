@@ -3,3 +3,9 @@
 .dolt/
 *.db
 .beads-credential-key
+
+# bv (beads viewer) local config and caches
+.bv/
+
+# Rust build output for AC tests
+target/
