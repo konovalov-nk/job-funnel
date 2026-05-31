@@ -34,6 +34,18 @@ Rust integration tests at the root verify Coherence catalog and shell-out to Rai
 cargo test                           # Run all AC tests
 ```
 
+## Coherence Project Checks
+
+Verify Coherence tooling is available and the project is provisioned:
+
+```bash
+coherence-core-db --version          # Expected: coherence-core-db 0.2.0
+coherence-core-db project catalog-preflight  # Expected: catalog-preflight: ok
+coherence-core-db db-ping            # Expected: db-ping: ok (socket)
+```
+
+All three are enforced by AC tests under `tests/ac_*.rs`.
+
 ## Non-Interactive Shell Commands
 
 **ALWAYS use non-interactive flags** with file operations to avoid hanging on confirmation prompts.
