@@ -12,6 +12,28 @@ bd close <id>         # Complete work
 bd dolt push          # Push beads data to remote
 ```
 
+## Rails App (rails/)
+
+The Rails application lives in the `rails/` subdirectory. All Rails commands must run from that directory:
+
+```bash
+cd rails
+bin/rails s                          # Start dev server (localhost:3000)
+bin/rails db:migrate                 # Run migrations
+bin/rake db:create                   # Create databases
+bin/rails console                    # Rails console
+bun run build                        # Build frontend assets
+bin/dev                              # Start with Procfile.dev (Foreman)
+```
+
+## Coherence AC Tests (root)
+
+Rust integration tests at the root verify Coherence catalog and shell-out to Rails:
+
+```bash
+cargo test                           # Run all AC tests
+```
+
 ## Non-Interactive Shell Commands
 
 **ALWAYS use non-interactive flags** with file operations to avoid hanging on confirmation prompts.

@@ -1,0 +1,10 @@
+inherit_gem:
+  standard: config/base.yml
+
+plugins:
+  - rubocop-rails
+  - rubocop-performance
+
+AllCops:
+  NewCops: enable
+  SuggestExtensions: false

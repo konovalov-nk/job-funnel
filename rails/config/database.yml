@@ -1,0 +1,59 @@
+default: &default
+  adapter: postgresql
+  encoding: unicode
+  host: <%= ENV.fetch("POSTGRES_HOST", "localhost") %>
+  port: <%= ENV.fetch("POSTGRES_PORT", "5432") %>
+  username: <%= ENV.fetch("POSTGRES_USER", "postgres") %>
+  password: <%= ENV.fetch("POSTGRES_PASSWORD", "password") %>
+  pool: <%= ENV.fetch("RAILS_MAX_THREADS", 5) %>
+
+development:
+  primary:
+    <<: *default
+    database: job_tracker_development
+  cache:
+    <<: *default
+    database: job_tracker_development_cache
+    migrations_paths: db/cache_migrate
+  queue:
+    <<: *default
+    database: job_tracker_development_queue
+    migrations_paths: db/queue_migrate
+  cable:
+    <<: *default
+    database: job_tracker_development_cable
+    migrations_paths: db/cable_migrate
+
+test:
+  primary:
+    <<: *default
+    database: job_tracker_test
+  cache:
+    <<: *default
+    database: job_tracker_test_cache
+    migrations_paths: db/cache_migrate
+  queue:
+    <<: *default
+    database: job_tracker_test_queue
+    migrations_paths: db/queue_migrate
+  cable:
+    <<: *default
+    database: job_tracker_test_cable
+    migrations_paths: db/cable_migrate
+
+production:
+  primary: &primary_production
+    <<: *default
+    database: job_tracker_production
+  cache:
+    <<: *primary_production
+    database: job_tracker_production_cache
+    migrations_paths: db/cache_migrate
+  queue:
+    <<: *primary_production
+    database: job_tracker_production_queue
+    migrations_paths: db/queue_migrate
+  cable:
+    <<: *primary_production
+    database: job_tracker_production_cable
+    migrations_paths: db/cable_migrate
