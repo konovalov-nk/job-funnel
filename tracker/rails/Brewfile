@@ -1,0 +1,5 @@
+brew "mise"
+brew "postgresql@18"
+brew "vips"
+brew "oven-sh/bun/bun"
+brew "act"
