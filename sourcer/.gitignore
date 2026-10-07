@@ -1,0 +1,12 @@
+.venv/
+data/
+state/
+duckdb/*
+!duckdb/.gitkeep
+evidence/node_modules/
+evidence/.evidence/
+evidence/build/
+*.log
+__pycache__/
+*.pyc
+.env

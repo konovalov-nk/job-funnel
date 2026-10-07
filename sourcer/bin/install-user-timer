@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+unit_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+
+mkdir -p "$unit_dir"
+while IFS= read -r line; do
+  printf '%s\n' "${line//__PROJECT_DIR__/$project_dir}"
+done < "$project_dir/systemd/openjobdata-sync.service" > "$unit_dir/openjobdata-sync.service"
+cp "$project_dir/systemd/openjobdata-sync.timer" "$unit_dir/openjobdata-sync.timer"
+
+systemctl --user daemon-reload
+systemctl --user enable --now openjobdata-sync.timer
+systemctl --user list-timers openjobdata-sync.timer --no-pager

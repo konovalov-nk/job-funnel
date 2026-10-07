@@ -1,0 +1,9 @@
+.venv
+data
+state
+duckdb
+evidence/node_modules
+evidence/.evidence
+evidence/build
+__pycache__
+*.log
