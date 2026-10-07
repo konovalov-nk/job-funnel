@@ -1,0 +1,14 @@
+[Unit]
+Description=Synchronize the OpenJobData dataset
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=__PROJECT_DIR__
+ExecStart=__PROJECT_DIR__/bin/openjobdata-sync
+Environment=OPENJOBDATA_VARIANT=full
+TimeoutStartSec=infinity
+
+[Install]
+WantedBy=default.target

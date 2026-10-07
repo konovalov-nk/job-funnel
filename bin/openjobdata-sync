@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+venv_dir="${OPENJOBDATA_VENV:-$project_dir/.venv}"
+
+if [[ ! -x "$venv_dir/bin/python" ]]; then
+  python3 -m venv "$venv_dir"
+  "$venv_dir/bin/python" -m pip install -r "$project_dir/requirements.txt"
+fi
+
+cd "$project_dir"
+exec "$venv_dir/bin/python" "$project_dir/sync_openjobdata.py" "$@"

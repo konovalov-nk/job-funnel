@@ -1,0 +1,28 @@
+name: openjobdata
+
+services:
+  duckdb:
+    image: duckdb/duckdb:1.5.5
+    entrypoint: /duckdb
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./data/openjobdata:/data/openjobdata:ro
+      - ./duckdb:/workspace
+      - ./sql:/sql:ro
+    command:
+      - -init
+      - /sql/init.sql
+      - /workspace/openjobdata.duckdb
+
+  evidence:
+    build:
+      context: .
+      dockerfile: evidence/Dockerfile
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./data/openjobdata:/data/openjobdata:ro
+    command: sh -c "npm run sources && npm run dev"

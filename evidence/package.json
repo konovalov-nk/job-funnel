@@ -1,0 +1,29 @@
+{
+  "name": "openjobdata-evidence",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "evidence build",
+    "dev": "evidence dev --host 0.0.0.0",
+    "sources": "evidence sources",
+    "test": "evidence build:strict"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@evidence-dev/core-components": "5.4.2",
+    "@evidence-dev/duckdb": "2.0.1",
+    "@evidence-dev/evidence": "40.1.8"
+  },
+  "devDependencies": {
+    "typescript": "5.4.2"
+  },
+  "overrides": {
+    "axios": "^1.7.4",
+    "jsonwebtoken": "9.0.0",
+    "sqlite3": "5.1.5",
+    "trim@<0.0.3": ">0.0.3"
+  }
+}

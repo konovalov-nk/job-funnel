@@ -1,0 +1,4 @@
+name: openjobdata
+type: duckdb
+options:
+  filename: ":memory:"

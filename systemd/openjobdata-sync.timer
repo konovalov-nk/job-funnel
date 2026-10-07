@@ -1,0 +1,11 @@
+[Unit]
+Description=Poll OpenJobData for daily changes every hour
+
+[Timer]
+OnBootSec=5m
+OnUnitActiveSec=1h
+Persistent=true
+RandomizedDelaySec=5m
+
+[Install]
+WantedBy=timers.target
